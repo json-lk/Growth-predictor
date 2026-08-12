@@ -3,24 +3,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ==========================================
-# 1. INGEST & CLEAN WORLD BANK DATA
+# WORLD BANK DATA
 # ==========================================
 
-# Replace with your actual file path
-file_path = "world_bank_data.csv" 
+file_path = "/the data.csv" 
 
-# Read CSV, explicitly forcing standard World Bank missing tokens to NumPy NaNs
 df = pd.read_csv(file_path, na_values=['..', '', ' ', 'NaN'])
 
-# Strip hidden whitespace from string column headers
 df.columns = df.columns.str.strip()
 
-# Print structural breakdown to check your columns
 print("--- Raw Data Structure ---")
 print(df.info())
 
 # ==========================================
-# 2. FEATURE ENGINEERING & VISUALIZATION
+# ENGINEERING & VISUALIZATION
 # ==========================================
 
 # Define short, clean dictionary keys for plotting and analysis
@@ -32,7 +28,7 @@ metric_labels = {
 }
 
 # Ensure your target columns are numeric and handle missing values per country
-# (Forward fill handles historical trends; backward fill cleans up early data gaps)
+
 for column in df.columns:
     if column in metric_labels.keys():
         df[column] = pd.to_numeric(df[column], errors='coerce')
