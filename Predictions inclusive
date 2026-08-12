@@ -1,5 +1,3 @@
-import os
-from typing import Dict, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -34,6 +32,260 @@ COLORS = {
 # DATA INGESTION
 # =====================================================================
 
+
+def load_worldbank_csv(file_path, target_code):
+    try:
+        skip_rows = 0
+        with open(file_path, 'r', encoding='latin1') as f:
+            first_lines = [f.readline() for _ in range(5)]
+            if any('Data Source' in line for line in first_lines):
+                skip_rows = 4
+
+        df = pd.read_csv(
+            file_path,
+            skiprows=skip_rows,
+            encoding='latin1',
+            on_bad_lines='skip',
+            na_values=['..', '', ' ', 'NaN', 'null'],
+        )
+
+        df.columns = df.columns.str.strip()
+        code_col = (
+            'Indicator Code'
+            if 'Indicator Code' in df.columns
+            else 'Series Code'
+        )
+
+        if code_col not in df.columns:
+            return None
+
+        filtered_df = df[
+            df[code_col].astype(str).str.strip() == target_code.strip()
+        ]
+        if filtered_df.empty:
+            return None
+
+        year_cols = [
+            c for c in filtered_df.columns if pd.Series(c).str.contains(r'\d{4}').any()
+        ]
+        years_parsed = (
+            pd.Series(year_cols).str.extract(r'(\d{4})')[0].astype(int).values
+        )
+        values_parsed = pd.to_numeric(
+            filtered_df[year_cols].values.flatten(), errors='coerce'
+        )
+
+        clean_df = (
+            pd.DataFrame({'Year': years_parsed, 'Value': values_parsed})
+            .dropna(subset=['Year'])
+            .sort_values(by='Year')
+            .reset_index(drop=True)
+        )
+
+        clean_df['Year'] = clean_df['Year'].astype(int)
+        clean_df['Value'] = clean_df['Value'].interpolate(
+            method='linear', limit_direction='both'
+        )
+
+        return clean_df
+
+    except FileNotFoundError:
+        print(f"Warning: File non-existent -> {file_path}")
+        return None
+    except Exception as err:
+        print(f"Failed parsing {file_path}: {err}")
+        return None
+
+
+# =====================================================================
+# FORECAST ENGINE
+# =====================================================================
+
+
+def generate_damped_forecast(
+    years, values, forecast_years, window=10, damping_factor=0.85
+):
+    recent_years = years[-window:]
+    recent_values = values[-window:]
+
+    res = linregress(recent_years, recent_values)
+    initial_slope = res.slope
+    last_historical_val = values[-1]
+    last_historical_year = years[-1]
+
+    forecasts = []
+    current_val = last_historical_val
+    current_slope = initial_slope
+
+    for y in forecast_years:
+        step_delta = y - last_historical_year
+        effective_slope = current_slope * (damping_factor**step_delta)
+        current_val = current_val + effective_slope
+        forecasts.append(current_val)
+
+    forecast_arr = np.array(forecasts)
+
+    stderr = res.stderr if res.stderr and not np.isnan(res.stderr) else 0.5
+    time_delta = forecast_years - last_historical_year
+    uncertainty_margin = 1.28 * stderr * np.sqrt(time_delta)
+
+    return (
+        forecast_arr,
+        forecast_arr - uncertainty_margin,
+        forecast_arr + uncertainty_margin,
+    )
+
+
+# =====================================================================
+# MAIN PIPELINE
+# =====================================================================
+
+historical_series = {}
+for country_name, file_name in COUNTRY_FILES.items():
+    df_clean = load_worldbank_csv(file_name, TARGET_CODE)
+    if df_clean is not None and not df_clean.empty:
+        historical_series[country_name] = df_clean
+
+plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+fig, ax = plt.subplots(figsize=(13, 7), dpi=100)
+
+peer_colors = COLORS['Peers']
+peer_idx = 0
+for country_name, df_data in historical_series.items():
+    if country_name == 'Ghana':
+        continue
+    c = peer_colors[peer_idx % len(peer_colors)]
+    ax.plot(
+        df_data['Year'],
+        df_data['Value'],
+        label=f'{country_name}',
+        linestyle='--',
+        alpha=0.45,
+        linewidth=1.4,
+        color=c,
+    )
+    peer_idx += 1
+
+if 'Ghana' in historical_series:
+    gha_df = historical_series['Ghana']
+    gha_years = gha_df['Year'].values
+    gha_values = gha_df['Value'].values
+
+    future_years = np.arange(FORECAST_START, FORECAST_START + FORECAST_HORIZON)
+    connect_years = np.append([gha_years[-1]], future_years)
+
+    baseline_pred, lower_ci, upper_ci = generate_damped_forecast(
+        gha_years, gha_values, future_years
+    )
+
+    connect_baseline = np.append([gha_values[-1]], baseline_pred)
+    connect_lower = np.append([gha_values[-1]], lower_ci)
+    connect_upper = np.append([gha_values[-1]], upper_ci)
+
+    accelerated_pred = baseline_pred + 2.0
+    connect_accelerated = np.append([gha_values[-1]], accelerated_pred)
+
+    ax.plot(
+        gha_years,
+        gha_values,
+        label='Ghana (Actual)',
+        color=COLORS['Ghana'],
+        linewidth=3.2,
+        zorder=4,
+    )
+
+    ax.plot(
+        connect_years,
+        connect_baseline,
+        label='Ghana: Damped Trend Forecast',
+        color=COLORS['Baseline'],
+        linestyle=':',
+        linewidth=2.5,
+        zorder=3,
+    )
+
+    ax.plot(
+        connect_years,
+        connect_accelerated,
+        label='Ghana: Peer-Accelerated Target (+2.0%)',
+        color=COLORS['Accelerated'],
+        linestyle='-.',
+        linewidth=2.5,
+        zorder=3,
+    )
+
+    ax.fill_between(
+        connect_years,
+        connect_lower,
+        connect_upper,
+        color=COLORS['Baseline'],
+        alpha=0.12,
+        label='80% Forecast Confidence Interval',
+    )
+
+    ax.annotate(
+        f'{baseline_pred[-1]:.1f}%',
+        xy=(future_years[-1], baseline_pred[-1]),
+        xytext=(5, -3),
+        textcoords='offset points',
+        fontsize=9,
+        fontweight='bold',
+        color=COLORS['Baseline'],
+    )
+
+    ax.annotate(
+        f'{accelerated_pred[-1]:.1f}%',
+        xy=(future_years[-1], accelerated_pred[-1]),
+        xytext=(5, -3),
+        textcoords='offset points',
+        fontsize=9,
+        fontweight='bold',
+        color=COLORS['Accelerated'],
+    )
+
+last_hist_yr = (
+    historical_series['Ghana']['Year'].max()
+    if 'Ghana' in historical_series
+    else 2026
+)
+ax.axvspan(
+    last_hist_yr,
+    FORECAST_START + FORECAST_HORIZON - 1,
+    color='gray',
+    alpha=0.06,
+    zorder=1,
+)
+ax.axvline(
+    x=last_hist_yr,
+    color='#555555',
+    linestyle='--',
+    alpha=0.7,
+    linewidth=1.2,
+    label='Forecast Horizon Start',
+)
+ax.axhline(0, color='black', linewidth=0.9, alpha=0.8)
+
+ax.set_title(
+    f'Ghana Economic Growth Blueprint vs. Peer Benchmark Economies\n{TARGET_NAME}',
+    fontsize=14,
+    fontweight='bold',
+    pad=15,
+)
+ax.set_xlabel('Year', fontsize=11, fontweight='bold', labelpad=10)
+ax.set_ylabel('Annual Growth Rate (%)', fontsize=11, fontweight='bold', labelpad=10)
+ax.set_xlim(left=1995, right=FORECAST_START + FORECAST_HORIZON)
+
+ax.legend(
+    loc='upper left',
+    frameon=True,
+    facecolor='white',
+    edgecolor='#cccccc',
+    framealpha=0.95,
+    fontsize=9.5,
+)
+
+plt.tight_layout()
+plt.show()
 
 def load_worldbank_csv(
     file_path: str, target_code: str
