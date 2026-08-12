@@ -12,11 +12,10 @@ TARGET_NAME = "Real GDP Growth (annual %)" # Human-readable label for the chart
 
 # Map your separate CSV filenames to their respective country names
 country_files = {
-    'Ghana': 'ghana_wb_data.csv',
-    'Vietnam': 'vietnam_wb_data.csv',
-    'Georgia': 'georgia_wb_data.csv',
-    'Morocco': 'morocco_wb_data.csv',
-    'Botswana': 'botswana_wb_data.csv'
+    'Ghana': 'ghana.csv',
+    'Georgia': 'georgia.csv',
+    'Morocco': 'morocco.csv',
+    'Botswana': 'botswana.csv'
 }
 
 # Initialize a clean Matplotlib figure
