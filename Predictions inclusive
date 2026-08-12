@@ -20,12 +20,16 @@ COUNTRY_FILES = {
     'Botswana': 'botswana_wb_data.csv',
 }
 
-COLORS = {
+# Unique colors assigned per country for clarity
+COUNTRY_COLORS = {
     'Ghana': '#1f77b4',
-    'Baseline': '#d62728',
-    'Accelerated': '#2ca02c',
-    'Peers': ['#7f7f7f', '#bcbd22', '#17becf', '#e377c2'],
+    'Vietnam': '#2ca02c',
+    'Georgia': '#ff7f0e',
+    'Morocco': '#9467bd',
+    'Botswana': '#8c564b',
 }
+
+ACCELERATED_COLOR = '#d62728'
 
 
 # =====================================================================
@@ -147,141 +151,129 @@ for country_name, file_name in COUNTRY_FILES.items():
         historical_series[country_name] = df_clean
 
 plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
-fig, ax = plt.subplots(figsize=(13, 7), dpi=100)
+fig, ax = plt.subplots(figsize=(14, 8), dpi=100)
 
-peer_colors = COLORS['Peers']
-peer_idx = 0
+future_years = np.arange(FORECAST_START, FORECAST_START + FORECAST_HORIZON)
+max_hist_yr = 2026
+
 for country_name, df_data in historical_series.items():
-    if country_name == 'Ghana':
-        continue
-    c = peer_colors[peer_idx % len(peer_colors)]
+    years = df_data['Year'].values
+    values = df_data['Value'].values
+    color = COUNTRY_COLORS.get(country_name, '#333333')
+    
+    if years[-1] > max_hist_yr:
+        max_hist_yr = years[-1]
+
+    # Plot actual historical series
     ax.plot(
-        df_data['Year'],
-        df_data['Value'],
-        label=f'{country_name}',
-        linestyle='--',
-        alpha=0.45,
-        linewidth=1.4,
-        color=c,
-    )
-    peer_idx += 1
-
-if 'Ghana' in historical_series:
-    gha_df = historical_series['Ghana']
-    gha_years = gha_df['Year'].values
-    gha_values = gha_df['Value'].values
-
-    future_years = np.arange(FORECAST_START, FORECAST_START + FORECAST_HORIZON)
-    connect_years = np.append([gha_years[-1]], future_years)
-
-    baseline_pred, lower_ci, upper_ci = generate_damped_forecast(
-        gha_years, gha_values, future_years
+        years,
+        values,
+        label=f'{country_name} (Actual)',
+        color=color,
+        linewidth=2.5 if country_name == 'Ghana' else 1.8,
+        zorder=4 if country_name == 'Ghana' else 3,
     )
 
-    connect_baseline = np.append([gha_values[-1]], baseline_pred)
-    connect_lower = np.append([gha_values[-1]], lower_ci)
-    connect_upper = np.append([gha_values[-1]], upper_ci)
-
-    accelerated_pred = baseline_pred + 2.0
-    connect_accelerated = np.append([gha_values[-1]], accelerated_pred)
-
-    ax.plot(
-        gha_years,
-        gha_values,
-        label='Ghana (Actual)',
-        color=COLORS['Ghana'],
-        linewidth=3.2,
-        zorder=4,
+    # Generate damped forecast for each nation
+    pred, lower_ci, upper_ci = generate_damped_forecast(
+        years, values, future_years
     )
 
+    connect_years = np.append([years[-1]], future_years)
+    connect_pred = np.append([values[-1]], pred)
+    connect_lower = np.append([values[-1]], lower_ci)
+    connect_upper = np.append([values[-1]], upper_ci)
+
+    # Plot national damped forecast projection
     ax.plot(
         connect_years,
-        connect_baseline,
-        label='Ghana: Damped Trend Forecast',
-        color=COLORS['Baseline'],
+        connect_pred,
         linestyle=':',
-        linewidth=2.5,
-        zorder=3,
+        linewidth=2.0,
+        color=color,
+        label=f'{country_name} (Forecast)',
     )
 
-    ax.plot(
-        connect_years,
-        connect_accelerated,
-        label='Ghana: Peer-Accelerated Target (+2.0%)',
-        color=COLORS['Accelerated'],
-        linestyle='-.',
-        linewidth=2.5,
-        zorder=3,
-    )
-
+    # Confidence interval band per nation
     ax.fill_between(
         connect_years,
         connect_lower,
         connect_upper,
-        color=COLORS['Baseline'],
-        alpha=0.12,
-        label='80% Forecast Confidence Interval',
+        color=color,
+        alpha=0.08,
     )
 
+    # Endpoint value annotation
     ax.annotate(
-        f'{baseline_pred[-1]:.1f}%',
-        xy=(future_years[-1], baseline_pred[-1]),
+        f'{pred[-1]:.1f}%',
+        xy=(future_years[-1], pred[-1]),
         xytext=(5, -3),
         textcoords='offset points',
-        fontsize=9,
+        fontsize=8.5,
         fontweight='bold',
-        color=COLORS['Baseline'],
+        color=color,
     )
 
-    ax.annotate(
-        f'{accelerated_pred[-1]:.1f}%',
-        xy=(future_years[-1], accelerated_pred[-1]),
-        xytext=(5, -3),
-        textcoords='offset points',
-        fontsize=9,
-        fontweight='bold',
-        color=COLORS['Accelerated'],
-    )
+    # Ghana-specific peer accelerated target (+2.0%)
+    if country_name == 'Ghana':
+        accelerated_pred = pred + 2.0
+        connect_accelerated = np.append([values[-1]], accelerated_pred)
 
-last_hist_yr = (
-    historical_series['Ghana']['Year'].max()
-    if 'Ghana' in historical_series
-    else 2026
-)
+        ax.plot(
+            connect_years,
+            connect_accelerated,
+            label='Ghana: Accelerated Target (+2.0%)',
+            color=ACCELERATED_COLOR,
+            linestyle='-.',
+            linewidth=2.2,
+            zorder=5,
+        )
+
+        ax.annotate(
+            f'{accelerated_pred[-1]:.1f}%',
+            xy=(future_years[-1], accelerated_pred[-1]),
+            xytext=(5, -3),
+            textcoords='offset points',
+            fontsize=8.5,
+            fontweight='bold',
+            color=ACCELERATED_COLOR,
+        )
+
+# Grid and vertical markers
 ax.axvspan(
-    last_hist_yr,
+    max_hist_yr,
     FORECAST_START + FORECAST_HORIZON - 1,
     color='gray',
     alpha=0.06,
     zorder=1,
 )
 ax.axvline(
-    x=last_hist_yr,
+    x=max_hist_yr,
     color='#555555',
     linestyle='--',
     alpha=0.7,
     linewidth=1.2,
-    label='Forecast Horizon Start',
+    label='Forecast Start Horizon',
 )
 ax.axhline(0, color='black', linewidth=0.9, alpha=0.8)
 
 ax.set_title(
-    f'Ghana Economic Growth Blueprint vs. Peer Benchmark Economies\n{TARGET_NAME}',
+    f'Multi-Nation Economic Growth Projections (5-Year Horizon)\n{TARGET_NAME}',
     fontsize=14,
     fontweight='bold',
     pad=15,
 )
 ax.set_xlabel('Year', fontsize=11, fontweight='bold', labelpad=10)
 ax.set_ylabel('Annual Growth Rate (%)', fontsize=11, fontweight='bold', labelpad=10)
-ax.set_xlim(left=1995, right=FORECAST_START + FORECAST_HORIZON)
+ax.set_xlim(left=1995, right=FORECAST_START + FORECAST_HORIZON + 1)
 
 ax.legend(
     loc='upper left',
+    bbox_to_anchor=(1.01, 1),
     frameon=True,
     facecolor='white',
     edgecolor='#cccccc',
-    framealpha=0.95,
-    fontsize=9.5,
+    fontsize=9,
 )
 
 plt.tight_layout()
