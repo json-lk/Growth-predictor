@@ -6,28 +6,23 @@ import matplotlib.pyplot as plt
 # PARAMETERS & FILES
 # ==========================================
 
-# Define your target indicator code here (change this code to switch metrics)
 TARGET_CODE = 'NY.GDP.MKTP.KD.ZG'  # Real GDP Growth (annual %)
 TARGET_NAME = "Real GDP Growth (annual %)" # Human-readable label for the chart
 
-# Map your separate CSV filenames to their respective country names
 country_files = {
     'Ghana': 'ghana.csv',
     'Georgia': 'georgia.csv',
     'Morocco': 'morocco.csv',
     'Botswana': 'botswana.csv'
 }
-
-# Initialize a clean Matplotlib figure
 plt.figure(figsize=(12, 6.5))
 
 # ==========================================
-# PROCESSING PIPELINE (ITERATE FILES)
+# ITERATE FILES
 # ==========================================
 
 for country, file_path in country_files.items():
     try:
-        # Load the individual CSV file
         df = pd.read_csv(file_path,skiprows=4,encoding='latin1',on_bad_lines='skip',na_values=['..', '', ' ', 'NaN'])
         
         # Clean column spaces to prevent key errors
