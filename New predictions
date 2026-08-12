@@ -34,12 +34,9 @@ for country, file_path in country_files.items():
         # Clean column spaces to prevent key errors
         df.columns = df.columns.str.strip()
         
-        # --- WORLD BANK FILTERING LOGIC ---
-        # Manual downloads usually have an 'Indicator Code' or 'Series Code' column.
-        # We find the row matching our target code.
+        # The indicator code thingy
         code_column = 'Indicator Code' if 'Indicator Code' in df.columns else 'Series Code'
-        
-        # Filter the DataFrame for only the target metric row
+    
         filtered_df = df[df[code_column].str.strip() == TARGET_CODE]
         
         if filtered_df.empty:
@@ -47,7 +44,7 @@ for country, file_path in country_files.items():
             continue
             
         # Extract the years (columns) and values (row data)
-        # We drop metadata columns to isolate the time-series numeric columns
+        # meta data drop, isolation of the time-series numeric columns
         metadata_cols = ['Country Name', 'Country Code', 'Indicator Name', 'Indicator Code', 'Series Name', 'Series Code']
         time_series_data = filtered_df.drop(columns=[col for col in metadata_cols if col in filtered_df.columns])
         
