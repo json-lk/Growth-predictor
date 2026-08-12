@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ==========================================
-# 1. SETUP PARAMETERS & FILES
+# PARAMETERS & FILES
 # ==========================================
 
 # Define your target indicator code here (change this code to switch metrics)
@@ -22,7 +22,7 @@ country_files = {
 plt.figure(figsize=(12, 6.5))
 
 # ==========================================
-# 2. PROCESSING PIPELINE (ITERATE FILES)
+# PROCESSING PIPELINE (ITERATE FILES)
 # ==========================================
 
 for country, file_path in country_files.items():
@@ -88,7 +88,7 @@ for country, file_path in country_files.items():
         print(f"Error processing {country}: {e}")
 
 # ==========================================
-# 3. CHART FINISHING & RENDERING
+#  CHART FINISHING & RENDERING
 # ==========================================
 
 plt.title(f"Ghana vs. Global Peers: {TARGET_NAME}\n[Indicator: {TARGET_CODE}]", fontsize=14, fontweight='bold', pad=15)
