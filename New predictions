@@ -1,0 +1,92 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ==========================================
+# 1. INGEST & CLEAN WORLD BANK DATA
+# ==========================================
+
+# Replace with your actual file path
+file_path = "world_bank_data.csv" 
+
+# Read CSV, explicitly forcing standard World Bank missing tokens to NumPy NaNs
+df = pd.read_csv(file_path, na_values=['..', '', ' ', 'NaN'])
+
+# Strip hidden whitespace from string column headers
+df.columns = df.columns.str.strip()
+
+# Print structural breakdown to check your columns
+print("--- Raw Data Structure ---")
+print(df.info())
+
+# ==========================================
+# 2. FEATURE ENGINEERING & VISUALIZATION
+# ==========================================
+
+# Define short, clean dictionary keys for plotting and analysis
+metric_labels = {
+    'GDP growth (annual %)': 'GDP Growth %',
+    'Manufacturing, value added (% of GDP)': 'Mfg % of GDP',
+    'Tax revenue (% of GDP)': 'Tax Revenue % of GDP',
+    'Gross fixed capital formation (% of GDP)': 'Investment % of GDP'
+}
+
+# Ensure your target columns are numeric and handle missing values per country
+# (Forward fill handles historical trends; backward fill cleans up early data gaps)
+for column in df.columns:
+    if column in metric_labels.keys():
+        df[column] = pd.to_numeric(df[column], errors='coerce')
+        # Apply localized imputation grouped by country
+        df[column] = df.groupby('Country Name')[column].ffill().bfill()
+
+# ==========================================
+# 3. HIGH-UTILITY MATPLOTLIB DASHBOARD
+# ==========================================
+
+# Initialize a clean, multi-panel comparison dashboard
+fig, axes = plt.subplots(2, 2, figsize=(15, 10), sharex=True)
+axes = axes.flatten()
+
+# Extract a unique array of countries in your dataset
+countries = df['Country Name'].unique()
+
+# Plot each indicator in its own sub-panel
+for idx, (raw_col, clean_label) in enumerate(metric_labels.items()):
+    ax = axes[idx]
+    
+    for country in countries:
+        # Pivot the time series per country
+        country_data = df[df['Country Name'] == country]
+        
+        # Sort by year to prevent jagged line plotting
+        country_data = country_data.sort_values(by='Time')
+        
+        # Highlight Ghana with a thick, distinct line style
+        linewidth = 3.5 if country == 'Ghana' else 1.5
+        alpha = 1.0 if country == 'Ghana' else 0.7
+        linestyle = '-' if country == 'Ghana' else '--'
+        
+        ax.plot(
+            country_data['Time'], 
+            country_data[raw_col], 
+            label=country, 
+            linewidth=linewidth,
+            alpha=alpha,
+            linestyle=linestyle
+        )
+    
+    ax.set_title(f"Ghana vs Peers: {clean_label}", fontsize=12, fontweight='bold')
+    ax.grid(True, linestyle=':', alpha=0.6)
+    ax.set_ylabel("Percentage (%)")
+
+# Consolidate and format axes labels
+axes[2].set_xlabel("Year")
+axes[3].set_xlabel("Year")
+
+# Clean, single-legend placement at the bottom of the dashboard
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc='lower center', ncol=5, frameon=True, fontsize=11)
+plt.tight_layout(rect=[0, 0.05, 1, 1])
+
+# Render dashboard to screen
+plt.show()
