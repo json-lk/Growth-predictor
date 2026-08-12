@@ -3,86 +3,108 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ==========================================
-# WORLD BANK DATA
+# 1. SETUP PARAMETERS & FILES
 # ==========================================
 
-file_path = "/the data.csv" 
+# Define your target indicator code here (change this code to switch metrics)
+TARGET_CODE = 'NY.GDP.MKTP.KD.ZG'  # Real GDP Growth (annual %)
+TARGET_NAME = "Real GDP Growth (annual %)" # Human-readable label for the chart
 
-df = pd.read_csv(file_path, na_values=['..', '', ' ', 'NaN'])
-
-df.columns = df.columns.str.strip()
-
-print("--- Raw Data Structure ---")
-print(df.info())
-
-# ==========================================
-# ENGINEERING & VISUALIZATION
-# ==========================================
-
-# Define short, clean dictionary keys for plotting and analysis
-metric_labels = {
-    'GDP growth (annual %)': 'GDP Growth %',
-    'Manufacturing, value added (% of GDP)': 'Mfg % of GDP',
-    'Tax revenue (% of GDP)': 'Tax Revenue % of GDP',
-    'Gross fixed capital formation (% of GDP)': 'Investment % of GDP'
+# Map your separate CSV filenames to their respective country names
+country_files = {
+    'Ghana': 'ghana_wb_data.csv',
+    'Vietnam': 'vietnam_wb_data.csv',
+    'Georgia': 'georgia_wb_data.csv',
+    'Morocco': 'morocco_wb_data.csv',
+    'Botswana': 'botswana_wb_data.csv'
 }
 
-# Ensure your target columns are numeric and handle missing values per country
-
-for column in df.columns:
-    if column in metric_labels.keys():
-        df[column] = pd.to_numeric(df[column], errors='coerce')
-        # Apply localized imputation grouped by country
-        df[column] = df.groupby('Country Name')[column].ffill().bfill()
+# Initialize a clean Matplotlib figure
+plt.figure(figsize=(12, 6.5))
 
 # ==========================================
-# 3. HIGH-UTILITY MATPLOTLIB DASHBOARD
+# 2. PROCESSING PIPELINE (ITERATE FILES)
 # ==========================================
 
-# Initialize a clean, multi-panel comparison dashboard
-fig, axes = plt.subplots(2, 2, figsize=(15, 10), sharex=True)
-axes = axes.flatten()
-
-# Extract a unique array of countries in your dataset
-countries = df['Country Name'].unique()
-
-# Plot each indicator in its own sub-panel
-for idx, (raw_col, clean_label) in enumerate(metric_labels.items()):
-    ax = axes[idx]
-    
-    for country in countries:
-        # Pivot the time series per country
-        country_data = df[df['Country Name'] == country]
+for country, file_path in country_files.items():
+    try:
+        # Load the individual CSV file
+        df = pd.read_csv(file_path, na_values=['..', '', ' ', 'NaN'])
         
-        # Sort by year to prevent jagged line plotting
-        country_data = country_data.sort_values(by='Time')
+        # Clean column spaces to prevent key errors
+        df.columns = df.columns.str.strip()
         
-        # Highlight Ghana with a thick, distinct line style
-        linewidth = 3.5 if country == 'Ghana' else 1.5
-        alpha = 1.0 if country == 'Ghana' else 0.7
-        linestyle = '-' if country == 'Ghana' else '--'
+        # --- WORLD BANK FILTERING LOGIC ---
+        # Manual downloads usually have an 'Indicator Code' or 'Series Code' column.
+        # We find the row matching our target code.
+        code_column = 'Indicator Code' if 'Indicator Code' in df.columns else 'Series Code'
         
-        ax.plot(
-            country_data['Time'], 
-            country_data[raw_col], 
+        # Filter the DataFrame for only the target metric row
+        filtered_df = df[df[code_column].str.strip() == TARGET_CODE]
+        
+        if filtered_df.empty:
+            print(f"Warning: Code {TARGET_CODE} not found in {file_path}")
+            continue
+            
+        # Extract the years (columns) and values (row data)
+        # We drop metadata columns to isolate the time-series numeric columns
+        metadata_cols = ['Country Name', 'Country Code', 'Indicator Name', 'Indicator Code', 'Series Name', 'Series Code']
+        time_series_data = filtered_df.drop(columns=[col for col in metadata_cols if col in filtered_df.columns])
+        
+        # Convert columns (Years) to numeric, and row values to numeric
+        years = pd.to_numeric(time_series_data.columns.str.extract(r'(\d{4})')[0], errors='coerce')
+        values = pd.to_numeric(time_series_data.values[0], errors='coerce')
+        
+        # Combine into a clean temporary DataFrame for sorting and cleaning
+        plot_df = pd.DataFrame({'Year': years, 'Value': values}).dropna(subset=['Year'])
+        plot_df = plot_df.sort_values(by='Year')
+        
+        # Handle internal missing data using NumPy/Pandas interpolation
+        plot_df['Value'] = plot_df['Value'].ffill().bfill()
+        
+        # --- CUSTOM MATPLOTLIB VISUAL STYLING ---
+        # Make Ghana stand out with a thick solid line, and peers with dashed lines
+        if country == 'Ghana':
+            line_style = '-'
+            line_width = 3.5
+            alpha_val = 1.0
+            color_val = '#D62728' # Distinct strong red
+        else:
+            line_style = '--'
+            line_width = 1.7
+            alpha_val = 0.75
+            color_val = None # Let matplotlib assign distinct loop colors
+            
+        # Plot this country's line onto the single unified graph
+        plt.plot(
+            plot_df['Year'], 
+            plot_df['Value'], 
             label=country, 
-            linewidth=linewidth,
-            alpha=alpha,
-            linestyle=linestyle
+            linestyle=line_style, 
+            linewidth=line_width, 
+            alpha=alpha_val,
+            color=color_val
         )
-    
-    ax.set_title(f"Ghana vs Peers: {clean_label}", fontsize=12, fontweight='bold')
-    ax.grid(True, linestyle=':', alpha=0.6)
-    ax.set_ylabel("Percentage (%)")
+        
+    except FileNotFoundError:
+        print(f"Skipping: File '{file_path}' not found. Check your directory.")
+    except Exception as e:
+        print(f"Error processing {country}: {e}")
 
-# Consolidate and format axes labels
-axes[2].set_xlabel("Year")
-axes[3].set_xlabel("Year")
+# ==========================================
+# 3. CHART FINISHING & RENDERING
+# ==========================================
 
-# Clean, single-legend placement at the bottom of the dashboard
-handles, labels = axes[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc='lower center', ncol=5, frameon=True, fontsize=11)
-plt.tight_layout(rect=[0, 0.05, 1, 1])
+plt.title(f"Ghana vs. Global Peers: {TARGET_NAME}\n[Indicator: {TARGET_CODE}]", fontsize=14, fontweight='bold', pad=15)
+plt.xlabel("Year", fontsize=12, fontweight='bold')
+plt.ylabel("Value (%)", fontsize=12, fontweight='bold')
 
-# Render dashboard to screen
+plt.grid(True, linestyle=':', alpha=0.6)
+plt.axhline(0, color='black', linewidth=0.8, linestyle='-') # Base reference line at 0%
+
+# Place the legend cleanly inside the plot space
+plt.legend(loc='best', frameon=True, facecolor='white', edgecolor='none', fontsize=11)
+plt.tight_layout()
+
+# Render the single graph
 plt.show()
