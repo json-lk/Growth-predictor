@@ -1,257 +1,179 @@
-Import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import linregress
 
-# =====================================================================
-# CONFIGURATION
-# =====================================================================
+# CONFIG
+target = 'NY.GDP.MKTP.KD.ZG'
+start_yr = 2027
+horizon = 5
 
-TARGET_CODE = 'NY.GDP.MKTP.KD.ZG'
-TARGET_NAME = "Real GDP Growth (annual %)"
-FORECAST_START = 2027
-FORECAST_HORIZON = 5
+# list of my files
+files = ['ghana.csv', 'egypt.csv', 'nigeria.csv', 'togo.csv', 'zambia.csv', 'ivory.csv']
+names = ['Ghana', 'Egypt', 'Nigeria', 'Togo', 'Zambia', 'Ivory Coast']
 
-COUNTRY_FILES = {
-    'Ghana': 'ghana.csv',
-    'Egypt': 'egypt.csv',
-    'Nigeria': 'nigeria.csv',
-    'Togo': 'togo.csv',
-    'Zambia': 'zambia.csv',
-    'Ivory Coast': 'ivory.csv',
-}
+# empty dict to store data
+data_dict = {}
 
-
-# =====================================================================
-# DATA INGESTION
-# =====================================================================
-
-
-def load_worldbank_csv(file_path, target_code):
+# loop through all files (copy pasted logic)
+for i in range(len(files)):
+    fname = files[i]
+    cname = names[i]
+    
     try:
-        skip_rows = 0
-        with open(file_path, 'r', encoding='latin1') as f:
-            first_lines = [f.readline() for _ in range(5)]
-            if any('Data Source' in line for line in first_lines):
-                skip_rows = 4
+        # try reading with 4 skiprows first
+        df = pd.read_csv(fname, skiprows=4, encoding='latin1', on_bad_lines='skip')
+    except:
+        # if fail try no skiprows
+        df = pd.read_csv(fname, encoding='latin1', on_bad_lines='skip')
+        
+    # fix column spaces
+    new_cols = []
+    for c in df.columns:
+        new_cols.append(str(c).strip())
+    df.columns = new_cols
+    
+    # check indicator code column
+    if 'Indicator Code' in df.columns:
+        code_col = 'Indicator Code'
+    else:
+        code_col = 'Series Code'
+        
+    # filter for gdp growth
+    sub_df = df[df[code_col] == target]
+    
+    if len(sub_df) > 0:
+        # find year columns
+        yrs = []
+        vals = []
+        for col in sub_df.columns:
+            # check if col name has 4 digits
+            if len(col) == 4 and col.isdigit():
+                yrs.append(int(col))
+                v = sub_df[col].values[0]
+                # replace bad values manually
+                if str(v) == '..' or str(v) == '' or str(v) == 'nan':
+                    vals.append(np.nan)
+                else:
+                    try:
+                        vals.append(float(v))
+                    except:
+                        vals.append(np.nan)
+                        
+        # make temp dataframe
+        temp = pd.DataFrame({'year': yrs, 'val': vals})
+        temp = temp.dropna(subset=['year'])
+        temp = temp.sort_values('year')
+        
+        # fill missing values
+        temp['val'] = temp['val'].interpolate(method='linear')
+        temp['val'] = temp['val'].bfill().ffill() # just in case
+        
+        data_dict[cname] = temp
 
-        df = pd.read_csv(
-            file_path,
-            skiprows=skip_rows,
-            encoding='latin1',
-            on_bad_lines='skip',
-            na_values=['..', '', ' ', 'NaN', 'null'],
-        )
+# SETUP PLOT
+plt.figure(figsize=(12, 7))
 
-        df.columns = df.columns.str.strip()
-        code_col = (
-            'Indicator Code'
-            if 'Indicator Code' in df.columns
-            else 'Series Code'
-        )
+# colors for plot
+my_colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown']
 
-        if code_col not in df.columns:
-            return None
+future_yrs = []
+for y in range(start_yr, start_yr + horizon):
+    future_yrs.append(y)
+future_yrs = np.array(future_yrs)
 
-        filtered_df = df[
-            df[code_col].astype(str).str.strip() == target_code.strip()
-        ]
-        if filtered_df.empty:
-            return None
+max_yr = 2026
 
-        year_cols = [
-            c for c in filtered_df.columns if pd.Series(c).str.contains(r'\d{4}').any()
-        ]
-        years_parsed = (
-            pd.Series(year_cols).str.extract(r'(\d{4})')[0].astype(int).values
-        )
-        values_parsed = pd.to_numeric(
-            filtered_df[year_cols].values.flatten(), errors='coerce'
-        )
-
-        clean_df = (
-            pd.DataFrame({'Year': years_parsed, 'Value': values_parsed})
-            .dropna(subset=['Year'])
-            .sort_values(by='Year')
-            .reset_index(drop=True)
-        )
-
-        clean_df['Year'] = clean_df['Year'].astype(int)
-        clean_df['Value'] = clean_df['Value'].interpolate(
-            method='linear', limit_direction='both'
-        )
-
-        return clean_df
-
-    except FileNotFoundError:
-        print(f"Warning: File non-existent -> {file_path}")
-        return None
-    except Exception as err:
-        print(f"Failed parsing {file_path}: {err}")
-        return None
-
-
-# =====================================================================
-# FORECAST ENGINE
-# =====================================================================
-
-
-def generate_damped_forecast(
-    years, values, forecast_years, window=10, damping_factor=0.85
-):
-    recent_years = years[-window:]
-    recent_values = values[-window:]
-
-    res = linregress(recent_years, recent_values)
-    initial_slope = res.slope if not np.isnan(res.slope) else 0.0
-    last_historical_val = values[-1]
-    last_historical_year = years[-1]
-
-    forecasts = []
-
-    for i, y in enumerate(forecast_years):
-        step_from_start = y - last_historical_year
-        effective_slope = initial_slope * (damping_factor**step_from_start)
-
-        if i == 0:
-            current_val = last_historical_val + effective_slope
+# MAIN LOOP FOR PLOTTING AND PREDICTION
+counter = 0
+for name in names:
+    if name not in data_dict:
+        continue
+        
+    df_country = data_dict[name]
+    x_hist = df_country['year'].values
+    y_hist = df_country['val'].values
+    col = my_colors[counter]
+    counter = counter + 1
+    
+    if x_hist[-1] > max_yr:
+        max_yr = x_hist[-1]
+        
+    # plot history line
+    if name == 'Ghana':
+        plt.plot(x_hist, y_hist, label=name, color=col, linewidth=3)
+    else:
+        plt.plot(x_hist, y_hist, label=name, color=col, linewidth=1.5)
+        
+    # FORECAST LOGIC (Linear regression on last 10 points)
+    recent_x = x_hist[-10:]
+    recent_y = y_hist[-10:]
+    
+    slope, intercept, r_value, p_value, std_err = linregress(recent_x, recent_y)
+    
+    if np.isnan(slope):
+        slope = 0.0
+        
+    last_val = y_hist[-1]
+    last_yr = x_hist[-1]
+    
+    preds = []
+    damp = 0.85
+    
+    # manual loop for predictions
+    for idx in range(len(future_yrs)):
+        fy = future_yrs[idx]
+        step = fy - last_yr
+        eff_slope = slope * (damp ** step)
+        
+        if idx == 0:
+            next_val = last_val + eff_slope
         else:
-            current_val = forecasts[-1] + effective_slope
+            next_val = preds[-1] + eff_slope
+            
+        preds.append(next_val)
+        
+    preds = np.array(preds)
+    
+    # error band calculation
+    if std_err is None or np.isnan(std_err):
+        err = 0.5
+    else:
+        err = std_err
+        
+    margin = []
+    for fy in future_yrs:
+        m = 1.28 * err * np.sqrt(fy - last_yr)
+        margin.append(m)
+    margin = np.array(margin)
+    
+    low_band = preds - margin
+    high_band = preds + margin
+    
+    # connect history to forecast
+    cx = np.array([x_hist[-1]] + list(future_yrs))
+    cy = np.array([y_hist[-1]] + list(preds))
+    clow = np.array([y_hist[-1]] + list(low_band))
+    chigh = np.array([y_hist[-1]] + list(high_band))
+    
+    # plot dotted forecast line
+    plt.plot(cx, cy, ':', color=col, linewidth=2)
+    
+    # plot shaded area
+    plt.fill_between(cx, clow, chigh, color=col, alpha=0.1)
+    
+    # print text at end of line
+    plt.text(future_yrs[-1] + 0.2, preds[-1], str(round(preds[-1], 1)) + '%', color=col, fontsize=9, fontweight='bold')
 
-        forecasts.append(current_val)
+# GRID & LABELS
+plt.axvline(x=max_yr, color='gray', linestyle='--')
+plt.axhline(y=0, color='black', linewidth=1)
 
-    forecast_arr = np.array(forecasts)
+plt.title('GDP Growth Prediction\n' + target, fontsize=12)
+plt.xlabel('Year')
+plt.ylabel('Growth Rate %')
+plt.xlim(1995, 2033)
+plt.grid(True)
+plt.legend(loc='upper left')
 
-    stderr = res.stderr if (res.stderr is not None and not np.isnan(res.stderr)) else 0.5
-    time_delta = forecast_years - last_historical_year
-    uncertainty_margin = 1.28 * stderr * np.sqrt(time_delta)
-
-    return (
-        forecast_arr,
-        forecast_arr - uncertainty_margin,
-        forecast_arr + uncertainty_margin,
-    )
-
-
-# =====================================================================
-# MAIN PIPELINE
-# =====================================================================
-
-historical_series = {}
-for country_name, file_name in COUNTRY_FILES.items():
-    df_clean = load_worldbank_csv(file_name, TARGET_CODE)
-    if df_clean is not None and not df_clean.empty:
-        historical_series[country_name] = df_clean
-
-plt.style.use(
-    'seaborn-v0_8-whitegrid'
-    if 'seaborn-v0_8-whitegrid' in plt.style.available
-    else 'default'
-)
-fig, ax = plt.subplots(figsize=(14, 8), dpi=100)
-
-future_years = np.arange(FORECAST_START, FORECAST_START + FORECAST_HORIZON)
-max_hist_yr = 2026
-
-# Assign a distinct color per country directly using plt.get_cmap()
-cmap = plt.get_cmap('tab10')
-country_colors = {
-    country: cmap(i % 10) for i, country in enumerate(historical_series.keys())
-}
-
-for country_name, df_data in historical_series.items():
-    years = df_data['Year'].values
-    values = df_data['Value'].values
-    color = country_colors[country_name]
-
-    if years[-1] > max_hist_yr:
-        max_hist_yr = years[-1]
-
-    # Plot actual historical series (Solid Line)
-    ax.plot(
-        years,
-        values,
-        label=f'{country_name}',
-        color=color,
-        linewidth=2.2 if country_name == 'Ghana' else 1.8,
-        zorder=4 if country_name == 'Ghana' else 3,
-    )
-
-    # Generate damped forecast for each nation
-    pred, lower_ci, upper_ci = generate_damped_forecast(
-        years, values, future_years
-    )
-
-    connect_years = np.append([years[-1]], future_years)
-    connect_pred = np.append([values[-1]], pred)
-    connect_lower = np.append([values[-1]], lower_ci)
-    connect_upper = np.append([values[-1]], upper_ci)
-
-    # Plot national damped forecast projection (Dotted Line, same color)
-    ax.plot(
-        connect_years,
-        connect_pred,
-        linestyle=':',
-        linewidth=2.0,
-        color=color,
-    )
-
-    # Confidence interval band per nation
-    ax.fill_between(
-        connect_years,
-        connect_lower,
-        connect_upper,
-        color=color,
-        alpha=0.08,
-    )
-
-    # Endpoint value annotation
-    ax.annotate(
-        f'{pred[-1]:.1f}%',
-        xy=(future_years[-1], pred[-1]),
-        xytext=(5, -3),
-        textcoords='offset points',
-        fontsize=8.5,
-        fontweight='bold',
-        color=color,
-    )
-
-# Grid and vertical markers
-ax.axvspan(
-    max_hist_yr,
-    FORECAST_START + FORECAST_HORIZON - 1,
-    color='gray',
-    alpha=0.06,
-    zorder=1,
-)
-ax.axvline(
-    x=max_hist_yr,
-    color='#555555',
-    linestyle='--',
-    alpha=0.7,
-    linewidth=1.2,
-    label='Forecast Start Horizon',
-)
-ax.axhline(0, color='black', linewidth=0.9, alpha=0.8)
-
-ax.set_title(
-    f'Multi-Nation Economic Growth Projections (5-Year Horizon)\n{TARGET_NAME}',
-    fontsize=14,
-    fontweight='bold',
-    pad=15,
-)
-ax.set_xlabel('Year', fontsize=11, fontweight='bold', labelpad=10)
-ax.set_ylabel('Annual Growth Rate (%)', fontsize=11, fontweight='bold', labelpad=10)
-ax.set_xlim(left=1995, right=FORECAST_START + FORECAST_HORIZON + 1)
-
-ax.legend(
-    loc='upper left',
-    bbox_to_anchor=(1.01, 1),
-    frameon=True,
-    facecolor='white',
-    edgecolor='#cccccc',
-    fontsize=9.5,
-)
-
-plt.tight_layout()
 plt.show()
