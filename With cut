@@ -9,9 +9,8 @@ from scipy.stats import linregress
 
 TARGET_CODE = 'NY.GDP.MKTP.KD.ZG'
 TARGET_NAME = "Real GDP Growth (annual %)"
-FORECAST_START = 2027
-FORECAST_HORIZON = 5
-HISTORICAL_CUTOFF_YEARS = 20  # Limit historical window to the last N years
+HISTORICAL_CUTOFF_YEARS = 20  # Number of recent years to cut off/hide for testing
+FORECAST_HORIZON = 20         # Forecast horizon matching the cutoff window
 
 COUNTRY_FILES = {
     'Ghana': 'ghana.csv',
@@ -100,7 +99,6 @@ def load_worldbank_csv(file_path, target_code):
 def generate_damped_forecast(
     years, values, forecast_years, window=10, damping_factor=0.85
 ):
-    # If the cutoff window is smaller than the default trend window, use available size
     effective_window = min(window, len(years))
     recent_years = years[-effective_window:]
     recent_values = values[-effective_window:]
@@ -144,8 +142,17 @@ historical_series = {}
 for country_name, file_name in COUNTRY_FILES.items():
     df_clean = load_worldbank_csv(file_name, TARGET_CODE)
     if df_clean is not None and not df_clean.empty:
-        # Apply 20-year cutoff to dataframe
-        historical_series[country_name] = df_clean.tail(HISTORICAL_CUTOFF_YEARS).reset_index(drop=True)
+        # CUTOFF LOGIC: Exclude the most recent 20 years to simulate a backtest
+        if len(df_clean) > HISTORICAL_CUTOFF_YEARS:
+            df_truncated = df_clean.iloc[:-HISTORICAL_CUTOFF_YEARS].reset_index(drop=True)
+        else:
+            df_truncated = df_clean
+        historical_series[country_name] = df_truncated
+
+# Dynamically determine the end of the truncated historical window
+max_hist_yr = max(df['Year'].max() for df in historical_series.values())
+FORECAST_START = max_hist_yr + 1
+future_years = np.arange(FORECAST_START, FORECAST_START + FORECAST_HORIZON)
 
 plt.style.use(
     'seaborn-v0_8-whitegrid'
@@ -154,29 +161,19 @@ plt.style.use(
 )
 fig, ax = plt.subplots(figsize=(14, 8), dpi=100)
 
-future_years = np.arange(FORECAST_START, FORECAST_START + FORECAST_HORIZON)
-max_hist_yr = 2026
-
-# Assign a distinct color per country directly using plt.get_cmap()
 cmap = plt.get_cmap('tab10')
 country_colors = {
     country: cmap(i % 10) for i, country in enumerate(historical_series.keys())
 }
 
-min_year_seen = FORECAST_START
+min_year_seen = min(df['Year'].min() for df in historical_series.values())
 
 for country_name, df_data in historical_series.items():
     years = df_data['Year'].values
     values = df_data['Value'].values
     color = country_colors[country_name]
 
-    if years[-1] > max_hist_yr:
-        max_hist_yr = years[-1]
-
-    if years[0] < min_year_seen:
-        min_year_seen = years[0]
-
-    # Plot actual historical series (Solid Line - 20 years max)
+    # Plot actual historical series (excluding the recent 20 years)
     ax.plot(
         years,
         values,
@@ -186,7 +183,7 @@ for country_name, df_data in historical_series.items():
         zorder=4 if country_name == 'Ghana' else 3,
     )
 
-    # Generate damped forecast using restricted cutoff data
+    # Generate damped forecast across the hidden 20-year window
     pred, lower_ci, upper_ci = generate_damped_forecast(
         years, values, future_years
     )
@@ -244,7 +241,7 @@ ax.axvline(
 ax.axhline(0, color='black', linewidth=0.9, alpha=0.8)
 
 ax.set_title(
-    f'Multi-Nation Economic Growth Projections (5-Year Horizon, 20-Yr Cutoff)\n{TARGET_NAME}',
+    f'Multi-Nation Economic Growth Backtest (Excluding Most Recent 20 Years)\n{TARGET_NAME}',
     fontsize=14,
     fontweight='bold',
     pad=15,
@@ -252,7 +249,6 @@ ax.set_title(
 ax.set_xlabel('Year', fontsize=11, fontweight='bold', labelpad=10)
 ax.set_ylabel('Annual Growth Rate (%)', fontsize=11, fontweight='bold', labelpad=10)
 
-# Set dynamic x-axis limits focused around the cutoff range
 ax.set_xlim(left=min_year_seen - 1, right=FORECAST_START + FORECAST_HORIZON + 1)
 
 ax.legend(
