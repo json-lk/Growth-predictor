@@ -13,23 +13,13 @@ FORECAST_START = 2027
 FORECAST_HORIZON = 5
 
 COUNTRY_FILES = {
-    'Ghana': 'ghana_wb_data.csv',
-    'Vietnam': 'vietnam_wb_data.csv',
-    'Georgia': 'georgia_wb_data.csv',
-    'Morocco': 'morocco_wb_data.csv',
-    'Botswana': 'botswana_wb_data.csv',
+    'Ghana': 'ghana.csv',
+    'Egypt': 'egypt.csv',
+    'Nigeria': 'nigeria.csv',
+    'Togo': 'togo.csv',
+    'Zambia': 'zambia.csv',
+    'Ivory Coast': 'ivory.csv',
 }
-
-# Unique colors assigned per country for clarity
-COUNTRY_COLORS = {
-    'Ghana': '#1f77b4',
-    'Vietnam': '#2ca02c',
-    'Georgia': '#ff7f0e',
-    'Morocco': '#9467bd',
-    'Botswana': '#8c564b',
-}
-
-ACCELERATED_COLOR = '#d62728'
 
 
 # =====================================================================
@@ -113,23 +103,26 @@ def generate_damped_forecast(
     recent_values = values[-window:]
 
     res = linregress(recent_years, recent_values)
-    initial_slope = res.slope
+    initial_slope = res.slope if not np.isnan(res.slope) else 0.0
     last_historical_val = values[-1]
     last_historical_year = years[-1]
 
     forecasts = []
-    current_val = last_historical_val
-    current_slope = initial_slope
 
-    for y in forecast_years:
-        step_delta = y - last_historical_year
-        effective_slope = current_slope * (damping_factor**step_delta)
-        current_val = current_val + effective_slope
+    for i, y in enumerate(forecast_years):
+        step_from_start = y - last_historical_year
+        effective_slope = initial_slope * (damping_factor**step_from_start)
+
+        if i == 0:
+            current_val = last_historical_val + effective_slope
+        else:
+            current_val = forecasts[-1] + effective_slope
+
         forecasts.append(current_val)
 
     forecast_arr = np.array(forecasts)
 
-    stderr = res.stderr if res.stderr and not np.isnan(res.stderr) else 0.5
+    stderr = res.stderr if (res.stderr is not None and not np.isnan(res.stderr)) else 0.5
     time_delta = forecast_years - last_historical_year
     uncertainty_margin = 1.28 * stderr * np.sqrt(time_delta)
 
@@ -150,27 +143,37 @@ for country_name, file_name in COUNTRY_FILES.items():
     if df_clean is not None and not df_clean.empty:
         historical_series[country_name] = df_clean
 
-plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
+plt.style.use(
+    'seaborn-v0_8-whitegrid'
+    if 'seaborn-v0_8-whitegrid' in plt.style.available
+    else 'default'
+)
 fig, ax = plt.subplots(figsize=(14, 8), dpi=100)
 
 future_years = np.arange(FORECAST_START, FORECAST_START + FORECAST_HORIZON)
 max_hist_yr = 2026
 
+# Assign a distinct color per country directly using plt.get_cmap()
+cmap = plt.get_cmap('tab10')
+country_colors = {
+    country: cmap(i % 10) for i, country in enumerate(historical_series.keys())
+}
+
 for country_name, df_data in historical_series.items():
     years = df_data['Year'].values
     values = df_data['Value'].values
-    color = COUNTRY_COLORS.get(country_name, '#333333')
-    
+    color = country_colors[country_name]
+
     if years[-1] > max_hist_yr:
         max_hist_yr = years[-1]
 
-    # Plot actual historical series
+    # Plot actual historical series (Solid Line)
     ax.plot(
         years,
         values,
-        label=f'{country_name} (Actual)',
+        label=f'{country_name}',
         color=color,
-        linewidth=2.5 if country_name == 'Ghana' else 1.8,
+        linewidth=2.2 if country_name == 'Ghana' else 1.8,
         zorder=4 if country_name == 'Ghana' else 3,
     )
 
@@ -184,14 +187,13 @@ for country_name, df_data in historical_series.items():
     connect_lower = np.append([values[-1]], lower_ci)
     connect_upper = np.append([values[-1]], upper_ci)
 
-    # Plot national damped forecast projection
+    # Plot national damped forecast projection (Dotted Line, same color)
     ax.plot(
         connect_years,
         connect_pred,
         linestyle=':',
         linewidth=2.0,
         color=color,
-        label=f'{country_name} (Forecast)',
     )
 
     # Confidence interval band per nation
@@ -213,31 +215,6 @@ for country_name, df_data in historical_series.items():
         fontweight='bold',
         color=color,
     )
-
-    # Ghana-specific peer accelerated target (+2.0%)
-    if country_name == 'Ghana':
-        accelerated_pred = pred + 2.0
-        connect_accelerated = np.append([values[-1]], accelerated_pred)
-
-        ax.plot(
-            connect_years,
-            connect_accelerated,
-            label='Ghana: Accelerated Target (+2.0%)',
-            color=ACCELERATED_COLOR,
-            linestyle='-.',
-            linewidth=2.2,
-            zorder=5,
-        )
-
-        ax.annotate(
-            f'{accelerated_pred[-1]:.1f}%',
-            xy=(future_years[-1], accelerated_pred[-1]),
-            xytext=(5, -3),
-            textcoords='offset points',
-            fontsize=8.5,
-            fontweight='bold',
-            color=ACCELERATED_COLOR,
-        )
 
 # Grid and vertical markers
 ax.axvspan(
@@ -273,7 +250,7 @@ ax.legend(
     frameon=True,
     facecolor='white',
     edgecolor='#cccccc',
-    fontsize=9,
+    fontsize=9.5,
 )
 
 plt.tight_layout()
