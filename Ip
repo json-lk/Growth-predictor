@@ -1,0 +1,27 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# 1. Load data
+df = pd.read_csv("API_GHA_DS2_en_csv_v2_9232.csv", skiprows=4)
+
+# 2. Filter for the specific indicator
+selection = df[df["Indicator Code"] == "IS.ROD.DESL.KT"]
+
+# 3. Drop non-year metadata columns
+# World Bank CSV metadata columns typically include these four:
+metadata_cols = ["Country Name", "Country Code", "Indicator Name", "Indicator Code"]
+data_series = selection.drop(columns=metadata_cols).iloc[0]
+
+# 4. Clean missing values and convert year labels to numeric
+data_series = data_series.dropna()
+data_series.index = pd.to_numeric(data_series.index, errors='coerce')
+
+# 5. Plot
+plt.figure(figsize=(10, 5))
+plt.plot(data_series.index, data_series.values, marker='o', color='blue')
+plt.title("Indicator: IS.ROD.DESL.KT")
+plt.xlabel("Year")
+plt.ylabel("Value")
+plt.grid(True)
+plt.show()
