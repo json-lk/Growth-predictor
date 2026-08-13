@@ -148,7 +148,9 @@ plt.style.use(
     if 'seaborn-v0_8-whitegrid' in plt.style.available
     else 'default'
 )
-fig, ax = plt.subplots(figsize=(14, 8), dpi=100)
+
+# Initialize figure without creating an 'ax' object
+plt.figure(figsize=(14, 8), dpi=100)
 
 future_years = np.arange(FORECAST_START, FORECAST_START + FORECAST_HORIZON)
 max_hist_yr = 2026
@@ -167,8 +169,8 @@ for country_name, df_data in historical_series.items():
     if years[-1] > max_hist_yr:
         max_hist_yr = years[-1]
 
-    # Plot actual historical series (Solid Line)
-    ax.plot(
+    # REPLACED: ax.plot -> plt.plot
+    plt.plot(
         years,
         values,
         label=f'{country_name}',
@@ -187,8 +189,8 @@ for country_name, df_data in historical_series.items():
     connect_lower = np.append([values[-1]], lower_ci)
     connect_upper = np.append([values[-1]], upper_ci)
 
-    # Plot national damped forecast projection (Dotted Line, same color)
-    ax.plot(
+    # REPLACED: ax.plot -> plt.plot
+    plt.plot(
         connect_years,
         connect_pred,
         linestyle=':',
@@ -196,8 +198,8 @@ for country_name, df_data in historical_series.items():
         color=color,
     )
 
-    # Confidence interval band per nation
-    ax.fill_between(
+    # REPLACED: ax.fill_between -> plt.fill_between
+    plt.fill_between(
         connect_years,
         connect_lower,
         connect_upper,
@@ -205,8 +207,8 @@ for country_name, df_data in historical_series.items():
         alpha=0.08,
     )
 
-    # Endpoint value annotation
-    ax.annotate(
+    # REPLACED: ax.annotate -> plt.annotate
+    plt.annotate(
         f'{pred[-1]:.1f}%',
         xy=(future_years[-1], pred[-1]),
         xytext=(5, -3),
@@ -216,15 +218,15 @@ for country_name, df_data in historical_series.items():
         color=color,
     )
 
-# Grid and vertical markers
-ax.axvspan(
+# REPLACED: ax.axvspan, ax.axvline, ax.axhline -> plt.*
+plt.axvspan(
     max_hist_yr,
     FORECAST_START + FORECAST_HORIZON - 1,
     color='gray',
     alpha=0.06,
     zorder=1,
 )
-ax.axvline(
+plt.axvline(
     x=max_hist_yr,
     color='#555555',
     linestyle='--',
@@ -232,19 +234,21 @@ ax.axvline(
     linewidth=1.2,
     label='Forecast Start Horizon',
 )
-ax.axhline(0, color='black', linewidth=0.9, alpha=0.8)
+plt.axhline(0, color='black', linewidth=0.9, alpha=0.8)
 
-ax.set_title(
+# REPLACED: ax.set_* -> plt.*
+plt.title(
     f'Multi-Nation Economic Growth Projections (5-Year Horizon)\n{TARGET_NAME}',
     fontsize=14,
     fontweight='bold',
     pad=15,
 )
-ax.set_xlabel('Year', fontsize=11, fontweight='bold', labelpad=10)
-ax.set_ylabel('Annual Growth Rate (%)', fontsize=11, fontweight='bold', labelpad=10)
-ax.set_xlim(left=1995, right=FORECAST_START + FORECAST_HORIZON + 1)
+plt.xlabel('Year', fontsize=11, fontweight='bold', labelpad=10)
+plt.ylabel('Annual Growth Rate (%)', fontsize=11, fontweight='bold', labelpad=10)
+plt.xlim(left=1995, right=FORECAST_START + FORECAST_HORIZON + 1)
 
-ax.legend(
+# REPLACED: ax.legend -> plt.legend
+plt.legend(
     loc='upper left',
     bbox_to_anchor=(1.01, 1),
     frameon=True,
