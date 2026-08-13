@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.stats import linregress
+from sklearn.ensemble import RandomForestRegressor
 
 # =====================================================================
 # CONFIGURATION
@@ -9,8 +9,8 @@ from scipy.stats import linregress
 
 TARGET_CODE = 'NY.GDP.MKTP.KD.ZG'
 TARGET_NAME = "Real GDP Growth (annual %)"
-HISTORICAL_CUTOFF_YEARS = 20  # Number of recent years to cut off/hide for testing
-FORECAST_HORIZON = 20         # Forecast horizon matching the cutoff window
+HISTORICAL_CUTOFF_YEARS = 20  # Number of recent years to cut off for testing
+CRISIS_YEARS = {2008, 2009, 2020}  # Major global shock years
 
 COUNTRY_FILES = {
     'Ghana': 'ghana.csv',
@@ -23,7 +23,7 @@ COUNTRY_FILES = {
 
 
 # =====================================================================
-# DATA INGESTION
+# DATA INGESTION & CLEANING
 # =====================================================================
 
 
@@ -81,6 +81,9 @@ def load_worldbank_csv(file_path, target_code):
             method='linear', limit_direction='both'
         )
 
+        # Clip extreme macroeconomic outliers (-15% to +20%)
+        clean_df['Value_Clipped'] = clean_df['Value'].clip(-15.0, 20.0)
+
         return clean_df
 
     except FileNotFoundError:
@@ -92,67 +95,78 @@ def load_worldbank_csv(file_path, target_code):
 
 
 # =====================================================================
-# FORECAST ENGINE
+# FEATURE ENGINEERING & RECURSIVE ML ENGINE
 # =====================================================================
 
 
-def generate_damped_forecast(
-    years, values, forecast_years, window=10, damping_factor=0.85
-):
-    effective_window = min(window, len(years))
-    recent_years = years[-effective_window:]
-    recent_values = values[-effective_window:]
+def build_features(df):
+    """Creates lag and rolling statistical features for ML model training."""
+    data = df.copy()
+    data['Lag_1'] = data['Value_Clipped'].shift(1)
+    data['Lag_2'] = data['Value_Clipped'].shift(2)
+    data['Lag_3'] = data['Value_Clipped'].shift(3)
+    data['Rolling_Mean_3'] = data['Value_Clipped'].shift(1).rolling(3).mean()
+    data['Rolling_Std_3'] = data['Value_Clipped'].shift(1).rolling(3).std().fillna(0)
+    data['Crisis_Year'] = data['Year'].apply(lambda y: 1 if y in CRISIS_YEARS else 0)
+    return data
 
-    res = linregress(recent_years, recent_values)
-    initial_slope = res.slope if not np.isnan(res.slope) else 0.0
-    last_historical_val = values[-1]
-    last_historical_year = years[-1]
 
-    forecasts = []
+def train_and_forecast_ml(train_df, test_years):
+    """
+    Trains a Random Forest Regressor on historical training data
+    and recursively forecasts values for future/test years.
+    """
+    # Build training features
+    df_feat = build_features(train_df).dropna()
+    feature_cols = ['Lag_1', 'Lag_2', 'Lag_3', 'Rolling_Mean_3', 'Rolling_Std_3', 'Crisis_Year']
 
-    for i, y in enumerate(forecast_years):
-        step_from_start = y - last_historical_year
-        effective_slope = initial_slope * (damping_factor**step_from_start)
+    X_train = df_feat[feature_cols]
+    y_train = df_feat['Value_Clipped']
 
-        if i == 0:
-            current_val = last_historical_val + effective_slope
-        else:
-            current_val = forecasts[-1] + effective_slope
+    if len(X_train) < 5:  # Fallback if insufficient historical data
+        return np.full(len(test_years), train_df['Value'].mean())
 
-        forecasts.append(current_val)
+    # Fit Random Forest Regressor
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
 
-    forecast_arr = np.array(forecasts)
+    # Recursive forecasting across test/horizon years
+    predictions = []
+    history_values = list(train_df['Value_Clipped'].values)
 
-    stderr = res.stderr if (res.stderr is not None and not np.isnan(res.stderr)) else 0.5
-    time_delta = forecast_years - last_historical_year
-    uncertainty_margin = 1.28 * stderr * np.sqrt(time_delta)
+    for year in test_years:
+        lag1 = history_values[-1]
+        lag2 = history_values[-2]
+        lag3 = history_values[-3]
+        roll_mean = np.mean(history_values[-3:])
+        roll_std = np.std(history_values[-3:])
+        is_crisis = 1 if year in CRISIS_YEARS else 0
 
-    return (
-        forecast_arr,
-        forecast_arr - uncertainty_margin,
-        forecast_arr + uncertainty_margin,
-    )
+        X_next = pd.DataFrame([{
+            'Lag_1': lag1,
+            'Lag_2': lag2,
+            'Lag_3': lag3,
+            'Rolling_Mean_3': roll_mean,
+            'Rolling_Std_3': roll_std,
+            'Crisis_Year': is_crisis
+        }])
+
+        pred_val = model.predict(X_next)[0]
+        predictions.append(pred_val)
+        history_values.append(pred_val)  # Append prediction to history for subsequent lags
+
+    return np.array(predictions)
 
 
 # =====================================================================
 # MAIN PIPELINE
 # =====================================================================
 
-historical_series = {}
+raw_series = {}
 for country_name, file_name in COUNTRY_FILES.items():
     df_clean = load_worldbank_csv(file_name, TARGET_CODE)
     if df_clean is not None and not df_clean.empty:
-        # CUTOFF LOGIC: Exclude the most recent 20 years to simulate a backtest
-        if len(df_clean) > HISTORICAL_CUTOFF_YEARS:
-            df_truncated = df_clean.iloc[:-HISTORICAL_CUTOFF_YEARS].reset_index(drop=True)
-        else:
-            df_truncated = df_clean
-        historical_series[country_name] = df_truncated
-
-# Dynamically determine the end of the truncated historical window
-max_hist_yr = max(df['Year'].max() for df in historical_series.values())
-FORECAST_START = max_hist_yr + 1
-future_years = np.arange(FORECAST_START, FORECAST_START + FORECAST_HORIZON)
+        raw_series[country_name] = df_clean
 
 plt.style.use(
     'seaborn-v0_8-whitegrid'
@@ -163,85 +177,74 @@ fig, ax = plt.subplots(figsize=(14, 8), dpi=100)
 
 cmap = plt.get_cmap('tab10')
 country_colors = {
-    country: cmap(i % 10) for i, country in enumerate(historical_series.keys())
+    country: cmap(i % 10) for i, country in enumerate(raw_series.keys())
 }
 
-min_year_seen = min(df['Year'].min() for df in historical_series.values())
-
-for country_name, df_data in historical_series.items():
-    years = df_data['Year'].values
-    values = df_data['Value'].values
+for country_name, df_data in raw_series.items():
     color = country_colors[country_name]
 
-    # Plot actual historical series (excluding the recent 20 years)
+    # Split into Train set (older history) and Test set (most recent 20 years)
+    if len(df_data) > HISTORICAL_CUTOFF_YEARS + 5:
+        train_df = df_data.iloc[:-HISTORICAL_CUTOFF_YEARS].reset_index(drop=True)
+        test_df = df_data.iloc[-HISTORICAL_CUTOFF_YEARS:].reset_index(drop=True)
+    else:
+        continue
+
+    train_years = train_df['Year'].values
+    train_values = train_df['Value'].values
+    test_years = test_df['Year'].values
+    actual_test_values = test_df['Value'].values
+
+    # Generate ML Predictions for the test window
+    ml_predictions = train_and_forecast_ml(train_df, test_years)
+
+    # Plot training history (Solid Line)
     ax.plot(
-        years,
-        values,
-        label=f'{country_name}',
+        train_years,
+        train_values,
+        label=f'{country_name} (Train)',
         color=color,
-        linewidth=2.2 if country_name == 'Ghana' else 1.8,
-        zorder=4 if country_name == 'Ghana' else 3,
+        linewidth=1.8,
     )
 
-    # Generate damped forecast across the hidden 20-year window
-    pred, lower_ci, upper_ci = generate_damped_forecast(
-        years, values, future_years
+    # Plot actual test values (Dashed Line)
+    ax.plot(
+        test_years,
+        actual_test_values,
+        linestyle='--',
+        color=color,
+        alpha=0.5,
+        linewidth=1.5,
     )
 
-    connect_years = np.append([years[-1]], future_years)
-    connect_pred = np.append([values[-1]], pred)
-    connect_lower = np.append([values[-1]], lower_ci)
-    connect_upper = np.append([values[-1]], upper_ci)
+    # Plot ML Forecast (Dotted Line with Markers)
+    connect_years = np.append([train_years[-1]], test_years)
+    connect_preds = np.append([train_values[-1]], ml_predictions)
 
-    # Plot national damped forecast projection (Dotted Line)
     ax.plot(
         connect_years,
-        connect_pred,
+        connect_preds,
         linestyle=':',
+        marker='o',
+        markersize=3,
         linewidth=2.0,
         color=color,
+        label=f'{country_name} (ML Forecast)',
     )
 
-    # Confidence interval band per nation
-    ax.fill_between(
-        connect_years,
-        connect_lower,
-        connect_upper,
-        color=color,
-        alpha=0.08,
-    )
-
-    # Endpoint value annotation
-    ax.annotate(
-        f'{pred[-1]:.1f}%',
-        xy=(future_years[-1], pred[-1]),
-        xytext=(5, -3),
-        textcoords='offset points',
-        fontsize=8.5,
-        fontweight='bold',
-        color=color,
-    )
-
-# Grid and vertical markers
-ax.axvspan(
-    max_hist_yr,
-    FORECAST_START + FORECAST_HORIZON - 1,
-    color='gray',
-    alpha=0.06,
-    zorder=1,
-)
+# Vertical line marking split point
+cutoff_start_year = test_years[0]
 ax.axvline(
-    x=max_hist_yr,
-    color='#555555',
+    x=cutoff_start_year - 0.5,
+    color='#333333',
     linestyle='--',
-    alpha=0.7,
-    linewidth=1.2,
-    label='Forecast Start Horizon',
+    linewidth=1.5,
+    label='Backtest Cutoff Point',
 )
 ax.axhline(0, color='black', linewidth=0.9, alpha=0.8)
 
 ax.set_title(
-    f'Multi-Nation Economic Growth Backtest (Excluding Most Recent 20 Years)\n{TARGET_NAME}',
+    f'Machine Learning Backtest (Random Forest with Lag Features)\n{TARGET_NAME}',
     fontsize=14,
     fontweight='bold',
     pad=15,
@@ -249,15 +252,13 @@ ax.set_title(
 ax.set_xlabel('Year', fontsize=11, fontweight='bold', labelpad=10)
 ax.set_ylabel('Annual Growth Rate (%)', fontsize=11, fontweight='bold', labelpad=10)
 
-ax.set_xlim(left=min_year_seen - 1, right=FORECAST_START + FORECAST_HORIZON + 1)
-
 ax.legend(
     loc='upper left',
     bbox_to_anchor=(1.01, 1),
     frameon=True,
     facecolor='white',
     edgecolor='#cccccc',
-    fontsize=9.5,
+    fontsize=8.5,
 )
 
 plt.tight_layout()
